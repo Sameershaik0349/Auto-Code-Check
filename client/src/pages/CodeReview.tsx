@@ -53,6 +53,8 @@ export const CodeReview: React.FC<CodeReviewProps> = ({ reviewId, onBack }) => {
 
   useEffect(() => {
     fetchReviewDetails(reviewId);
+    setSelectedFile('');
+    setIsEditing(false);
   }, [reviewId]);
 
   // Set default selected file once details load
