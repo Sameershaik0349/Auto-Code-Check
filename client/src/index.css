@@ -1,0 +1,158 @@
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-800 transition-colors duration-200 antialiased font-sans;
+  }
+  
+  body.dark {
+    @apply bg-darkBg text-slate-200;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-slate-300 rounded-full;
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    @apply bg-slate-700;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-400;
+  }
+}
+
+/* Glassmorphism styling */
+.glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.dark .glass {
+  background: rgba(18, 20, 32, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(31, 34, 53, 0.7);
+}
+
+/* Slide and fade animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+/* Unified custom style for code viewer lines */
+.code-line-number {
+  user-select: none;
+  text-align: right;
+  padding-right: 1rem;
+  min-width: 3rem;
+  border-right: 1px solid rgba(229, 231, 235, 0.1);
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-in {
+  animation: slideInRight 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes cursorBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.animate-cursor-blink {
+  animation: cursorBlink 0.9s step-end infinite;
+}
+
+@keyframes fadeOutScale {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.96); }
+}
+
+.animate-fade-out-scale {
+  animation: fadeOutScale 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* 3D Cyber grid scroll */
+@keyframes gridScroll {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 40px;
+  }
+}
+
+.animate-grid-scroll {
+  animation: gridScroll 2.5s linear infinite;
+}
+
+/* Ambient gradient blob floating */
+@keyframes ambientBlob1 {
+  0%, 100% { transform: translate(0px, 0px) scale(1); }
+  50% { transform: translate(80px, -60px) scale(1.15); }
+}
+
+@keyframes ambientBlob2 {
+  0%, 100% { transform: translate(0px, 0px) scale(1); }
+  50% { transform: translate(-60px, 50px) scale(0.9); }
+}
+
+.animate-blob-1 {
+  animation: ambientBlob1 25s ease-in-out infinite;
+}
+
+.animate-blob-2 {
+  animation: ambientBlob2 20s ease-in-out infinite;
+}
+
+/* Drifting particles upward */
+@keyframes driftUp {
+  0% {
+    transform: translateY(110%) rotate(0deg);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.15;
+  }
+  85% {
+    opacity: 0.15;
+  }
+  100% {
+    transform: translateY(-20%) rotate(15deg);
+    opacity: 0;
+  }
+}
+
+.animate-drift-up {
+  animation: driftUp 18s linear infinite;
+}
+
+
+
