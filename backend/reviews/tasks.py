@@ -79,21 +79,95 @@ def run_code_analysis(repo_id: int, user_id: int = None):
             import subprocess
             import os
             import shutil
+            import re
             
+            # Parse GitHub/GitLab URL for clone URL, branch, and subpath
+            clone_url = url
+            branch = repo.branch
+            subpath = None
+            
+            # Helper to parse URL
+            def parse_git_url(git_url: str):
+                g_url = git_url.strip()
+                if g_url.endswith('/'):
+                    g_url = g_url[:-1]
+                
+                # GitHub tree/blob match
+                github_match = re.match(
+                    r'^https?://(?:www\.)?github\.com/([^/]+)/([^/]+)/(blob|tree)/([^/]+)/(.+)$',
+                    g_url,
+                    re.IGNORECASE
+                )
+                if github_match:
+                    owner_val = github_match.group(1)
+                    repo_val = github_match.group(2)
+                    if repo_val.endswith('.git'):
+                        repo_val = repo_val[:-4]
+                    branch_val = github_match.group(4)
+                    subpath_val = github_match.group(5)
+                    return f"https://github.com/{owner_val}/{repo_val}.git", branch_val, subpath_val
+                
+                # Standard GitHub
+                standard_github = re.match(
+                    r'^https?://(?:www\.)?github\.com/([^/]+)/([^/.]+)(?:\.git)?$',
+                    g_url,
+                    re.IGNORECASE
+                )
+                if standard_github:
+                    owner_val = standard_github.group(1)
+                    repo_val = standard_github.group(2)
+                    return f"https://github.com/{owner_val}/{repo_val}.git", None, None
+                
+                # GitLab tree/blob match
+                gitlab_match = re.match(
+                    r'^https?://(?:www\.)?gitlab\.com/([^/]+)/([^/]+)/-/(blob|tree)/([^/]+)/(.+)$',
+                    g_url,
+                    re.IGNORECASE
+                )
+                if gitlab_match:
+                    owner_val = gitlab_match.group(1)
+                    repo_val = gitlab_match.group(2)
+                    if repo_val.endswith('.git'):
+                        repo_val = repo_val[:-4]
+                    branch_val = gitlab_match.group(4)
+                    subpath_val = gitlab_match.group(5)
+                    return f"https://gitlab.com/{owner_val}/{repo_val}.git", branch_val, subpath_val
+                
+                # Standard GitLab
+                standard_gitlab = re.match(
+                    r'^https?://(?:www\.)?gitlab\.com/([^/]+)/([^/.]+)(?:\.git)?$',
+                    g_url,
+                    re.IGNORECASE
+                )
+                if standard_gitlab:
+                    owner_val = standard_gitlab.group(1)
+                    repo_val = standard_gitlab.group(2)
+                    return f"https://gitlab.com/{owner_val}/{repo_val}.git", None, None
+                
+                return g_url, None, None
+
+            parsed_url, parsed_branch, parsed_subpath = parse_git_url(url)
+            if parsed_url:
+                clone_url = parsed_url
+            if parsed_branch:
+                branch = parsed_branch
+            if parsed_subpath:
+                subpath = parsed_subpath
+                
             temp_dir = tempfile.mkdtemp()
             try:
-                logger.info(f"Cloning repository {url} branch {repo.branch} to {temp_dir}...")
+                logger.info(f"Cloning repository {clone_url} branch {branch} to {temp_dir}...")
                 result = subprocess.run(
-                    ['git', 'clone', '--depth', '1', '-b', repo.branch, url, temp_dir],
+                    ['git', 'clone', '--depth', '1', '-b', branch, clone_url, temp_dir],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     timeout=35,
                     text=True
                 )
                 if result.returncode != 0:
-                    logger.warning(f"Failed to clone branch {repo.branch}, trying default branch...")
+                    logger.warning(f"Failed to clone branch {branch}, trying default branch...")
                     result = subprocess.run(
-                        ['git', 'clone', '--depth', '1', url, temp_dir],
+                        ['git', 'clone', '--depth', '1', clone_url, temp_dir],
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         timeout=35,
@@ -115,6 +189,14 @@ def run_code_analysis(repo_id: int, user_id: int = None):
                             if ext in allowed_extensions:
                                 full_path = os.path.join(root, f)
                                 rel_path = os.path.relpath(full_path, temp_dir).replace('\\', '/')
+                                
+                                # If subpath is specified, filter files
+                                if subpath:
+                                    if rel_path == subpath or rel_path.startswith(subpath + '/'):
+                                        pass
+                                    else:
+                                        continue
+                                        
                                 try:
                                     with open(full_path, 'r', encoding='utf-8', errors='ignore') as fh:
                                         content = fh.read()
@@ -226,11 +308,13 @@ def run_code_analysis(repo_id: int, user_id: int = None):
 
         # Handle clean code positive issue
         elif total_issues_count == 0:
+            first_file = files_to_analyze[0]['filepath']
+            snippet = '# Code Quality Audit Passed' if first_file.endswith('.py') else '// Code Quality Audit Passed'
             Issue.objects.create(
                 review=review,
-                filepath=files_to_analyze[0]['filepath'],
+                filepath=first_file,
                 line=1,
-                code_snippet='// Code Quality Audit Passed',
+                code_snippet=snippet,
                 message='Excellent! Code is clean. No security vulnerabilities, performance bottlenecks, or code smell issues were detected.',
                 severity='low',
                 category='style',
