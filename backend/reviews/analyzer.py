@@ -75,6 +75,23 @@ class CodeAnalyzer:
         is_python = ext == 'py'
         is_go = ext == 'go'
         
+        # Check Python syntax errors
+        if is_python:
+            import ast
+            try:
+                ast.parse(content)
+            except SyntaxError as e:
+                issues.append({
+                    'filepath': filepath,
+                    'line': e.lineno or 1,
+                    'code_snippet': e.text.strip() if e.text else 'Syntax Error',
+                    'message': f"Syntax Error: {e.msg}",
+                    'severity': 'critical',
+                    'category': 'style',
+                    'suggestion': 'Fix the Python syntax error. Ensure block statements end with a colon (:), matching brackets, and correct indentation.',
+                    'status': 'open'
+                })
+        
         loop_keywords = ['for ', 'while '] if is_python else ['for(', 'for (', 'while(', 'while (']
         loop_lines = []
 
