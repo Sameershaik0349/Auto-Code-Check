@@ -248,7 +248,12 @@ export const CodeReview: React.FC<CodeReviewProps> = ({ reviewId, onBack }) => {
           <div className="p-2 space-y-1">
             {files.map((file) => {
               const fileMetrics = metrics.find(m => m.filepath === file.filepath);
-              const fileIssues = issues.filter(i => i.filepath === file.filepath && i.status === 'open');
+              const fileIssues = issues.filter(i => 
+                i.filepath === file.filepath && 
+                i.status === 'open' &&
+                !i.code_snippet.includes('Code Quality Audit Passed') &&
+                !i.code_snippet.includes('Repository is empty')
+              );
               const isSelected = file.filepath === selectedFile;
 
               return (

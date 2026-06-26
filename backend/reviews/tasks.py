@@ -303,7 +303,7 @@ def run_code_analysis(repo_id: int, user_id: int = None):
                 suggestion='Please add source code files to the repository and run the audit again.',
                 status='open'
             )
-            total_issues_count = 1
+            total_issues_count = 0
             cumulative_score = 100
 
         # Handle clean code positive issue
@@ -321,7 +321,7 @@ def run_code_analysis(repo_id: int, user_id: int = None):
                 suggestion='Code is good! Maintain this standard.',
                 status='open'
             )
-            total_issues_count = 1
+            total_issues_count = 0
             cumulative_score = 100
                 
         # Calculate overall score
