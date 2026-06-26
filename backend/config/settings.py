@@ -38,8 +38,9 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',  # Must be as high as possible
-    'authentication.middleware.DebugLoginMiddleware', # Debug logger
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+    'authentication.middleware.DebugLoginMiddleware', # Debug logger
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -114,6 +115,12 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_DIRS = [
     BASE_DIR.parent / 'client' / 'dist',
 ]
+
+STORAGES = {
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+    },
+}
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

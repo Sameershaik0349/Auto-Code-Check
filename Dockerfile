@@ -34,5 +34,5 @@ WORKDIR /app/backend
 # Expose port 8000
 EXPOSE 8000
 
-# Run migrations first, then start Daphne ASGI server
-CMD python manage.py migrate --noinput && daphne -b 0.0.0.0 -p 8000 config.asgi:application
+# Run migrations and collectstatic, then start Daphne ASGI server
+CMD python manage.py migrate --noinput && python manage.py collectstatic --noinput && daphne -b 0.0.0.0 -p 8000 config.asgi:application
