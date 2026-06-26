@@ -81,8 +81,7 @@ DATABASES = {
 }
 
 if os.environ.get('DATABASE_URL'):
-    DATABASES['default'] = dj_database_url.config(conn_max_age=600)
-    DATABASES['default']['ssl_require'] = False
+    DATABASES['default'] = dj_database_url.config(conn_max_age=600, ssl_require=False)
 
 # Custom User Model
 AUTH_USER_MODEL = 'authentication.CustomUser'
