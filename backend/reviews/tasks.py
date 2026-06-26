@@ -64,31 +64,111 @@ def run_code_analysis(repo_id: int, user_id: int = None):
             except User.DoesNotExist:
                 pass
                 
-        # Retrieve virtual files
-        virtual_match = None
-        for vr in VIRTUAL_REPOSITORIES:
-            if vr['name'] == repo.name or vr['name'] in repo.url:
-                virtual_match = vr
-                break
+        # Check if it is a real Git repository URL
+        is_git_repo = False
+        url = repo.url.strip()
+        if url.startswith('http') or url.startswith('git@') or url.startswith('git://'):
+            is_git_repo = True
+            
+        files_to_analyze = []
+        is_empty_repo = False
+        clone_failed = False
         
-        if not virtual_match:
-            # Fallback to default
-            virtual_match = VIRTUAL_REPOSITORIES[0]
+        if is_git_repo:
+            import tempfile
+            import subprocess
+            import os
+            import shutil
+            
+            temp_dir = tempfile.mkdtemp()
+            try:
+                logger.info(f"Cloning repository {url} branch {repo.branch} to {temp_dir}...")
+                result = subprocess.run(
+                    ['git', 'clone', '--depth', '1', '-b', repo.branch, url, temp_dir],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=35,
+                    text=True
+                )
+                if result.returncode != 0:
+                    logger.warning(f"Failed to clone branch {repo.branch}, trying default branch...")
+                    result = subprocess.run(
+                        ['git', 'clone', '--depth', '1', url, temp_dir],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        timeout=35,
+                        text=True
+                    )
+                
+                if result.returncode != 0:
+                    logger.error(f"Git clone failed: {result.stderr}")
+                    clone_failed = True
+                else:
+                    # Scan files
+                    ignored_dirs = {'.git', 'node_modules', 'venv', '.venv', '__pycache__', 'dist', 'build', 'staticfiles'}
+                    allowed_extensions = {'.js', '.jsx', '.ts', '.tsx', '.py', '.go'}
+                    
+                    for root, dirs, files in os.walk(temp_dir):
+                        dirs[:] = [d for d in dirs if d not in ignored_dirs]
+                        for f in files:
+                            ext = os.path.splitext(f)[1].lower()
+                            if ext in allowed_extensions:
+                                full_path = os.path.join(root, f)
+                                rel_path = os.path.relpath(full_path, temp_dir).replace('\\', '/')
+                                try:
+                                    with open(full_path, 'r', encoding='utf-8', errors='ignore') as fh:
+                                        content = fh.read()
+                                    files_to_analyze.append({
+                                        'filepath': rel_path,
+                                        'content': content
+                                    })
+                                except Exception as e:
+                                    logger.warning(f"Error reading file {rel_path}: {e}")
+                    
+                    if not files_to_analyze:
+                        is_empty_repo = True
+                        
+            except Exception as e:
+                logger.exception(f"Error cloning repository: {e}")
+                clone_failed = True
+            finally:
+                try:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                except Exception:
+                    pass
+                    
+        # Fallback to virtual repos if not a git URL or if clone failed
+        if not is_git_repo or clone_failed:
+            virtual_match = None
+            for vr in VIRTUAL_REPOSITORIES:
+                if vr['name'] == repo.name or vr['name'] in repo.url:
+                    virtual_match = vr
+                    break
+            if not virtual_match:
+                virtual_match = VIRTUAL_REPOSITORIES[0]
+            files_to_analyze = [dict(f) for f in virtual_match['files']]
+            
+        elif is_empty_repo:
+            files_to_analyze = [{
+                'filepath': 'warning.txt',
+                'content': 'This repository is empty (contains no JavaScript, TypeScript, Python, or Go source code files to analyze).'
+            }]
             
         # Create Review record
+        import json
         review = Review.objects.create(
             repo=repo,
             commit_hash='commit_' + ''.join(random.choices('0123456789abcdef', k=8)),
             branch=repo.branch,
             status='pending',
             score=100,
-            author=author_email
+            author=author_email,
+            files_json=json.dumps(files_to_analyze)
         )
         
         # Load enabled rules
         rules = list(Rule.objects.all())
         if not rules:
-            # Seed default rules if not exist yet
             seed_default_rules()
             rules = list(Rule.objects.all())
             
@@ -98,7 +178,7 @@ def run_code_analysis(repo_id: int, user_id: int = None):
         cumulative_score = 0
         file_results = []
         
-        for vf in virtual_match['files']:
+        for vf in files_to_analyze:
             res = analyzer.analyze_file(vf['filepath'], vf['content'])
             file_results.append(res)
             total_issues_count += len(res['issues'])
@@ -127,6 +207,38 @@ def run_code_analysis(repo_id: int, user_id: int = None):
                     suggestion=issue['suggestion'],
                     status='open'
                 )
+                
+        # Handle empty repo warning issue
+        if is_empty_repo:
+            Issue.objects.create(
+                review=review,
+                filepath='warning.txt',
+                line=1,
+                code_snippet='Repository is empty',
+                message='This repository is empty. No source code files matching (.js, .ts, .py, .go) were found to analyze.',
+                severity='critical',
+                category='style',
+                suggestion='Please add source code files to the repository and run the audit again.',
+                status='open'
+            )
+            total_issues_count = 1
+            cumulative_score = 100
+
+        # Handle clean code positive issue
+        elif total_issues_count == 0:
+            Issue.objects.create(
+                review=review,
+                filepath=files_to_analyze[0]['filepath'],
+                line=1,
+                code_snippet='// Code Quality Audit Passed',
+                message='Excellent! Code is clean. No security vulnerabilities, performance bottlenecks, or code smell issues were detected.',
+                severity='low',
+                category='style',
+                suggestion='Code is good! Maintain this standard.',
+                status='open'
+            )
+            total_issues_count = 1
+            cumulative_score = 100
                 
         # Calculate overall score
         avg_score = int(round(cumulative_score / len(file_results))) if file_results else 100

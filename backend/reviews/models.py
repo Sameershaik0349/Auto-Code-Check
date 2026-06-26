@@ -13,6 +13,7 @@ class Review(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     score = models.IntegerField(default=100)
     author = models.CharField(max_length=255)
+    files_json = models.TextField(default='[]', blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

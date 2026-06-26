@@ -10,7 +10,9 @@ import {
   Printer, 
   Code,
   CornerDownRight,
-  X
+  X,
+  Edit3,
+  Save
 } from 'lucide-react';
 
 interface CodeReviewProps {
@@ -25,6 +27,10 @@ export const CodeReview: React.FC<CodeReviewProps> = ({ reviewId, onBack }) => {
     resolveIssue, 
     postComment, 
     applyAiFix, 
+    updateFileContent,
+    updateFileLocally,
+    addWsListener,
+    removeWsListener,
     isLoading 
   } = useReviewStore();
 
@@ -32,6 +38,10 @@ export const CodeReview: React.FC<CodeReviewProps> = ({ reviewId, onBack }) => {
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [commentInputs, setCommentInputs] = useState<Record<number, string>>({});
   const [activeCommentLine, setActiveCommentLine] = useState<number | null>(null);
+  
+  // Custom edit file states
+  const [isEditing, setIsEditing] = useState<boolean>(false);
+  const [editContent, setEditContent] = useState<string>('');
 
   // AI Fix diff preview states
   const [previewFix, setPreviewFix] = useState<{
@@ -51,6 +61,30 @@ export const CodeReview: React.FC<CodeReviewProps> = ({ reviewId, onBack }) => {
       setSelectedFile(activeReview.files[0].filepath);
     }
   }, [activeReview, selectedFile]);
+
+  // Sync active file content to editContent state
+  useEffect(() => {
+    if (activeReview) {
+      const activeFileObject = activeReview.files.find(f => f.filepath === selectedFile);
+      if (activeFileObject) {
+        setEditContent(activeFileObject.content);
+      }
+    }
+  }, [selectedFile, activeReview]);
+
+  // Real-time collaborative edit sync via WebSockets
+  useEffect(() => {
+    const handleWsEvent = (event: any) => {
+      if (event.type === 'FILE_UPDATED' && event.reviewId === reviewId) {
+        updateFileLocally(event.filepath, event.content);
+        if (event.filepath === selectedFile) {
+          setEditContent(event.content);
+        }
+      }
+    };
+    addWsListener(handleWsEvent);
+    return () => removeWsListener(handleWsEvent);
+  }, [reviewId, selectedFile, addWsListener, removeWsListener, updateFileLocally]);
 
   if (isLoading || !activeReview) {
     return (
@@ -255,153 +289,204 @@ export const CodeReview: React.FC<CodeReviewProps> = ({ reviewId, onBack }) => {
         {/* Panel 2: Interactive Editor & Diff (Middle) */}
         <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden relative">
           {/* File metrics header banner */}
-          {activeFileMetrics && (
-            <div className="px-6 py-2.5 bg-slate-900/80 border-b border-slate-800 flex items-center justify-between text-xs text-slate-400 font-mono print:hidden">
-              <span>Path: {selectedFile}</span>
-              <div className="flex gap-4">
+          <div className="px-6 py-2.5 bg-slate-900/80 border-b border-slate-800 flex items-center justify-between text-xs text-slate-400 font-mono print:hidden">
+            <div className="flex items-center gap-3">
+              <span className="truncate max-w-[200px] sm:max-w-xs md:max-w-md">Path: {selectedFile}</span>
+              <button
+                onClick={() => {
+                  if (isEditing) {
+                    setIsEditing(false);
+                  } else {
+                    setIsEditing(true);
+                    setEditContent(activeFileContent);
+                  }
+                }}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded transition-colors ${
+                  isEditing 
+                    ? 'bg-amber-600 text-white hover:bg-amber-700' 
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'
+                }`}
+              >
+                <Edit3 className="h-3 w-3" />
+                <span>{isEditing ? 'Cancel Edit' : 'Edit File'}</span>
+              </button>
+            </div>
+            {activeFileMetrics && (
+              <div className="flex gap-4 items-center">
                 <span>Complexity: <strong className="text-slate-200">{activeFileMetrics.complexity}</strong></span>
                 <span>Maintainability: <strong className="text-slate-200">{activeFileMetrics.maintainability}%</strong></span>
                 <span>Coverage: <strong className="text-slate-200">{activeFileMetrics.coverage}%</strong></span>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Code Viewer body */}
           <div className="flex-1 overflow-y-auto p-6 font-mono text-sm leading-relaxed text-slate-300">
-            {activeFileContent.split('\n').map((lineCode, index) => {
-              const lineNum = index + 1;
-              
-              // Find if this line has comments
-              const lineComments = comments.filter(c => c.filepath === selectedFile && c.line === lineNum);
+            {isEditing ? (
+              <div className="flex flex-col h-full gap-4">
+                <textarea
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                  className="flex-1 min-h-[400px] w-full p-4 bg-slate-900 border border-slate-800 rounded-xl text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 font-mono text-sm leading-relaxed"
+                  spellCheck={false}
+                />
+                <div className="flex gap-3 justify-end">
+                  <button
+                    onClick={() => setIsEditing(false)}
+                    className="px-4 py-2 bg-slate-850 hover:bg-slate-800 text-slate-300 rounded-lg text-xs font-bold transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const success = await updateFileContent(reviewId, selectedFile, editContent);
+                      if (success) {
+                        setIsEditing(false);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow transition-colors"
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                    <span>Save Changes</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              activeFileContent.split('\n').map((lineCode, index) => {
+                const lineNum = index + 1;
+                
+                // Find if this line has comments
+                const lineComments = comments.filter(c => c.filepath === selectedFile && c.line === lineNum);
 
-              // Find if this line has an issue
-              const lineIssue = issues.find(i => i.filepath === selectedFile && i.line === lineNum && i.status === 'open');
+                // Find if this line has an issue
+                const lineIssue = issues.find(i => i.filepath === selectedFile && i.line === lineNum && i.status === 'open');
 
-              // Check if AI fix is previewing on this line
-              const isDiffPreviewLine = previewFix && previewFix.line === lineNum;
+                // Check if AI fix is previewing on this line
+                const isDiffPreviewLine = previewFix && previewFix.line === lineNum;
 
-              // Build severity color highlighting
-              let lineBgClass = '';
-              if (lineIssue) {
-                if (lineIssue.severity === 'critical') lineBgClass = 'bg-red-500/10 border-l-2 border-red-500';
-                else if (lineIssue.severity === 'high') lineBgClass = 'bg-orange-500/10 border-l-2 border-orange-500';
-                else if (lineIssue.severity === 'medium') lineBgClass = 'bg-amber-500/10 border-l-2 border-amber-500';
-                else if (lineIssue.severity === 'low') lineBgClass = 'bg-emerald-500/10 border-l-2 border-emerald-500';
-              }
+                // Build severity color highlighting
+                let lineBgClass = '';
+                if (lineIssue) {
+                  if (lineIssue.severity === 'critical') lineBgClass = 'bg-red-500/10 border-l-2 border-red-500';
+                  else if (lineIssue.severity === 'high') lineBgClass = 'bg-orange-500/10 border-l-2 border-orange-500';
+                  else if (lineIssue.severity === 'medium') lineBgClass = 'bg-amber-500/10 border-l-2 border-amber-500';
+                  else if (lineIssue.severity === 'low') lineBgClass = 'bg-emerald-500/10 border-l-2 border-emerald-500';
+                }
 
-              return (
-                <div key={lineNum} className="flex flex-col">
-                  {/* Normal line or highlighted issue line */}
-                  {!isDiffPreviewLine ? (
-                    <div 
-                      className={`group flex items-start py-0.5 hover:bg-slate-900/60 transition-colors ${lineBgClass}`}
-                      style={{ contentVisibility: 'auto' }}
-                    >
-                      {/* Plus button to comment */}
-                      <button
-                        onClick={() => setActiveCommentLine(activeCommentLine === lineNum ? null : lineNum)}
-                        className="opacity-0 group-hover:opacity-100 px-1 text-slate-500 hover:text-indigo-400 shrink-0 transition-opacity print:hidden"
-                        title="Add comment"
+                return (
+                  <div key={lineNum} className="flex flex-col">
+                    {/* Normal line or highlighted issue line */}
+                    {!isDiffPreviewLine ? (
+                      <div 
+                        className={`group flex items-start py-0.5 hover:bg-slate-900/60 transition-colors ${lineBgClass}`}
+                        style={{ contentVisibility: 'auto' }}
                       >
-                        <MessageSquare className="h-3.5 w-3.5 mt-0.5" />
-                      </button>
+                        {/* Plus button to comment */}
+                        <button
+                          onClick={() => setActiveCommentLine(activeCommentLine === lineNum ? null : lineNum)}
+                          className="opacity-0 group-hover:opacity-100 px-1 text-slate-500 hover:text-indigo-400 shrink-0 transition-opacity print:hidden"
+                          title="Add comment"
+                        >
+                          <MessageSquare className="h-3.5 w-3.5 mt-0.5" />
+                        </button>
 
-                      {/* Line Number */}
-                      <span className="code-line-number text-slate-600 mr-4 font-mono select-none">
-                        {lineNum}
-                      </span>
+                        {/* Line Number */}
+                        <span className="code-line-number text-slate-600 mr-4 font-mono select-none">
+                          {lineNum}
+                        </span>
 
-                      {/* Code line text */}
-                      <pre className="m-0 overflow-x-auto whitespace-pre-wrap flex-1 text-slate-300 dark:text-slate-100 font-mono">
-                        {lineCode || ' '}
-                      </pre>
-                    </div>
-                  ) : (
-                    /* AI Fix Diff Preview Mode */
-                    <div className="flex flex-col border border-indigo-500/30 rounded-lg overflow-hidden my-2">
-                      <div className="bg-indigo-950/40 px-4 py-1.5 flex items-center justify-between text-xs text-indigo-400 border-b border-indigo-500/20">
-                        <span className="flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" /> AI Fix Suggestion</span>
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={acceptFixPatch}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-0.5 rounded text-[10px] font-bold"
-                          >
-                            Apply Fix
-                          </button>
-                          <button 
-                            onClick={() => setPreviewFix(null)}
-                            className="text-slate-400 hover:text-slate-200"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
+                        {/* Code line text */}
+                        <pre className="m-0 overflow-x-auto whitespace-pre-wrap flex-1 text-slate-300 dark:text-slate-100 font-mono">
+                          {lineCode || ' '}
+                        </pre>
                       </div>
-                      
-                      {/* Red Deletions */}
-                      <div className="bg-red-950/20 text-red-400 flex items-start py-1">
-                        <span className="code-line-number text-red-500/40 mr-4 select-none">-</span>
-                        <pre className="m-0 whitespace-pre-wrap font-mono">{previewFix?.original}</pre>
-                      </div>
-
-                      {/* Green Additions */}
-                      <div className="bg-emerald-950/20 text-emerald-400 flex items-start py-1">
-                        <span className="code-line-number text-emerald-500/40 mr-4 select-none">+</span>
-                        <pre className="m-0 whitespace-pre-wrap font-mono">{previewFix?.fixed}</pre>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Inline comments thread list */}
-                  {lineComments.length > 0 && (
-                    <div className="pl-14 py-2 space-y-2 border-l border-slate-800 bg-slate-900/30">
-                      {lineComments.map((c) => (
-                        <div key={c.id} className="flex gap-3 bg-slate-900/60 p-3 rounded-lg border border-slate-800/80 max-w-2xl">
-                          <img
-                            src={c.user_details.avatar || 'https://api.dicebear.com/7.x/adventurer/svg?seed=Admin'}
-                            alt="Avatar"
-                            className="w-7 h-7 rounded-full shrink-0 bg-slate-800"
-                          />
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-semibold text-slate-200">{c.user_details.name}</span>
-                              <span className="text-[9px] text-slate-500">{new Date(c.created_at).toLocaleDateString()}</span>
-                            </div>
-                            <p className="text-xs text-slate-400 mt-1">{c.text}</p>
+                    ) : (
+                      /* AI Fix Diff Preview Mode */
+                      <div className="flex flex-col border border-indigo-500/30 rounded-lg overflow-hidden my-2">
+                        <div className="bg-indigo-950/40 px-4 py-1.5 flex items-center justify-between text-xs text-indigo-400 border-b border-indigo-500/20">
+                          <span className="flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" /> AI Fix Suggestion</span>
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={acceptFixPatch}
+                              className="bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-0.5 rounded text-[10px] font-bold"
+                            >
+                              Apply Fix
+                            </button>
+                            <button 
+                              onClick={() => setPreviewFix(null)}
+                              className="text-slate-400 hover:text-slate-200"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  )}
+                        
+                        {/* Red Deletions */}
+                        <div className="bg-red-950/20 text-red-400 flex items-start py-1">
+                          <span className="code-line-number text-red-500/40 mr-4 select-none">-</span>
+                          <pre className="m-0 whitespace-pre-wrap font-mono">{previewFix?.original}</pre>
+                        </div>
 
-                  {/* Comment Input Box */}
-                  {activeCommentLine === lineNum && (
-                    <div className="pl-14 py-3 bg-slate-900/20 border-l border-slate-800 flex flex-col gap-2 max-w-xl">
-                      <textarea
-                        rows={2}
-                        placeholder="Write a comment or suggestions..."
-                        value={commentInputs[lineNum] || ''}
-                        onChange={(e) => setCommentInputs(prev => ({ ...prev, [lineNum]: e.target.value }))}
-                        className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
-                      />
-                      <div className="flex gap-2 justify-end">
-                        <button
-                          onClick={() => setActiveCommentLine(null)}
-                          className="px-2.5 py-1 text-[10px] font-semibold text-slate-500 hover:text-slate-300"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          onClick={() => handlePostComment(lineNum)}
-                          className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-[10px] font-semibold"
-                        >
-                          Send Comment
-                        </button>
+                        {/* Green Additions */}
+                        <div className="bg-emerald-950/20 text-emerald-400 flex items-start py-1">
+                          <span className="code-line-number text-emerald-500/40 mr-4 select-none">+</span>
+                          <pre className="m-0 whitespace-pre-wrap font-mono">{previewFix?.fixed}</pre>
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                    )}
+
+                    {/* Inline comments thread list */}
+                    {lineComments.length > 0 && (
+                      <div className="pl-14 py-2 space-y-2 border-l border-slate-800 bg-slate-900/30">
+                        {lineComments.map((c) => (
+                          <div key={c.id} className="flex gap-3 bg-slate-900/60 p-3 rounded-lg border border-slate-800/80 max-w-2xl">
+                            <img
+                              src={c.user_details.avatar || 'https://api.dicebear.com/7.x/adventurer/svg?seed=Admin'}
+                              alt="Avatar"
+                              className="w-7 h-7 rounded-full shrink-0 bg-slate-800"
+                            />
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-semibold text-slate-200">{c.user_details.name}</span>
+                                <span className="text-[9px] text-slate-500">{new Date(c.created_at).toLocaleDateString()}</span>
+                              </div>
+                              <p className="text-xs text-slate-400 mt-1">{c.text}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Comment Input Box */}
+                    {activeCommentLine === lineNum && (
+                      <div className="pl-14 py-3 bg-slate-900/20 border-l border-slate-800 flex flex-col gap-2 max-w-xl">
+                        <textarea
+                          rows={2}
+                          placeholder="Write a comment or suggestions..."
+                          value={commentInputs[lineNum] || ''}
+                          onChange={(e) => setCommentInputs(prev => ({ ...prev, [lineNum]: e.target.value }))}
+                          className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                        />
+                        <div className="flex gap-2 justify-end">
+                          <button
+                            onClick={() => setActiveCommentLine(null)}
+                            className="px-2.5 py-1 text-[10px] font-semibold text-slate-500 hover:text-slate-300"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={() => handlePostComment(lineNum)}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-[10px] font-semibold"
+                          >
+                            Send Comment
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
 

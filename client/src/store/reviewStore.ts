@@ -90,6 +90,8 @@ interface ReviewState {
   applyAiFix: (issueId: number) => Promise<{ originalCode: string; fixedCode: string; filepath: string; line: number } | null>;
   addCommentLocally: (comment: Comment) => void;
   updateIssueLocally: (issue: Issue) => void;
+  updateFileContent: (reviewId: number, filepath: string, content: string) => Promise<boolean>;
+  updateFileLocally: (filepath: string, content: string) => void;
   socket: WebSocket | null;
   wsListeners: ((data: any) => void)[];
   setSocket: (socket: WebSocket | null) => void;
@@ -294,6 +296,39 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
           issues: active.issues.map(i => i.id === issue.id ? issue : i)
         }
       });
+    }
+  },
+
+  updateFileContent: async (reviewId, filepath, content) => {
+    try {
+      const headers = useAuthStore.getState().getAuthHeaders();
+      const response = await fetch(`${API_BASE}/reviews/${reviewId}/update_file/`, {
+        method: 'POST',
+        headers: {
+          ...headers,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ filepath, content })
+      });
+
+      if (!response.ok) throw new Error('Failed to update file content');
+
+      // Update locally
+      get().updateFileLocally(filepath, content);
+      return true;
+    } catch (err: any) {
+      set({ error: err.message });
+      return false;
+    }
+  },
+
+  updateFileLocally: (filepath, content) => {
+    const active = get().activeReview;
+    if (active) {
+      const updatedFiles = active.files.map(f => 
+        f.filepath === filepath ? { ...f, content } : f
+      );
+      set({ activeReview: { ...active, files: updatedFiles } });
     }
   },
 

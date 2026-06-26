@@ -32,15 +32,24 @@ class ReviewViewSet(viewsets.ReadOnlyModelViewSet):
         metrics = CodeMetrics.objects.filter(review=instance)
         comments = Comment.objects.filter(review=instance)
         
-        # Load virtual file contents to show code in diff editor
-        repo = instance.repo
+        # Load file contents
         virtual_files = []
-        for vr in VIRTUAL_REPOSITORIES:
-            if vr['name'] == repo.name or vr['name'] in repo.url:
-                virtual_files = vr['files']
-                break
+        if instance.files_json and instance.files_json != '[]':
+            try:
+                import json
+                virtual_files = json.loads(instance.files_json)
+            except Exception:
+                pass
+                
         if not virtual_files:
-            virtual_files = VIRTUAL_REPOSITORIES[0]['files']
+            # Fallback to virtual repos matching
+            repo = instance.repo
+            for vr in VIRTUAL_REPOSITORIES:
+                if vr['name'] == repo.name or vr['name'] in repo.url:
+                    virtual_files = vr['files']
+                    break
+            if not virtual_files:
+                virtual_files = VIRTUAL_REPOSITORIES[0]['files']
 
         return Response({
             'review': self.get_serializer(instance).data,
@@ -49,6 +58,60 @@ class ReviewViewSet(viewsets.ReadOnlyModelViewSet):
             'comments': CommentSerializer(comments, many=True).data,
             'files': virtual_files
         })
+
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def update_file(self, request, pk=None):
+        instance = self.get_object()
+        filepath = request.data.get('filepath')
+        content = request.data.get('content')
+        
+        if not filepath or content is None:
+            return Response({'error': 'Missing filepath or content'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        import json
+        virtual_files = []
+        if instance.files_json:
+            try:
+                virtual_files = json.loads(instance.files_json)
+            except Exception:
+                pass
+                
+        # If empty, pre-populate it from fallbacks so we can edit it
+        if not virtual_files:
+            repo = instance.repo
+            for vr in VIRTUAL_REPOSITORIES:
+                if vr['name'] == repo.name or vr['name'] in repo.url:
+                    virtual_files = [dict(f) for f in vr['files']]
+                    break
+            if not virtual_files:
+                virtual_files = [dict(f) for f in VIRTUAL_REPOSITORIES[0]['files']]
+                
+        file_found = False
+        for f in virtual_files:
+            if f['filepath'] == filepath:
+                f['content'] = content
+                file_found = True
+                break
+                
+        if not file_found:
+            virtual_files.append({'filepath': filepath, 'content': content})
+            
+        instance.files_json = json.dumps(virtual_files)
+        instance.save()
+        
+        # Broadcast file update to other clients via WebSockets
+        try:
+            from .tasks import broadcast_ws_event
+            broadcast_ws_event({
+                'type': 'FILE_UPDATED',
+                'reviewId': instance.id,
+                'filepath': filepath,
+                'content': content
+            })
+        except Exception:
+            pass
+            
+        return Response({'success': True, 'message': 'File content updated successfully.'})
 
 
 class IssueViewSet(viewsets.ModelViewSet):
