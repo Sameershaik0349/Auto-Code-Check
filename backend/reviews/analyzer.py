@@ -81,14 +81,24 @@ class CodeAnalyzer:
             try:
                 ast.parse(content)
             except SyntaxError as e:
+                # Try to auto-resolve missing colon
+                orig_text = e.text or ''
+                fixed_suggestion = orig_text.rstrip('\r\n')
+                if 'expected \':\'' in e.msg:
+                    if not fixed_suggestion.endswith(':'):
+                        fixed_suggestion += ':'
+                else:
+                    # Generic suggestion
+                    fixed_suggestion = orig_text.strip() or "Syntax Error Fix"
+                    
                 issues.append({
                     'filepath': filepath,
                     'line': e.lineno or 1,
-                    'code_snippet': e.text.strip() if e.text else 'Syntax Error',
+                    'code_snippet': orig_text.strip() if orig_text else 'Syntax Error',
                     'message': f"Syntax Error: {e.msg}",
                     'severity': 'critical',
                     'category': 'style',
-                    'suggestion': 'Fix the Python syntax error. Ensure block statements end with a colon (:), matching brackets, and correct indentation.',
+                    'suggestion': fixed_suggestion.strip(),
                     'status': 'open'
                 })
         

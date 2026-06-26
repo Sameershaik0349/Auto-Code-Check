@@ -371,6 +371,143 @@ def run_code_analysis(repo_id: int, user_id: int = None):
             pass
 
 
+def reanalyze_review_files(review_id: int):
+    """
+    Re-runs static code analysis on the review's local files (saved in files_json).
+    Useful after file edits or issue resolutions, avoiding full git cloning.
+    """
+    try:
+        from .models import Review, Issue, CodeMetrics, Rule
+        from .analyzer import CodeAnalyzer
+        from django.utils import timezone
+        import json
+        import random
+        
+        review = Review.objects.get(id=review_id)
+        repo = review.repo
+        
+        # Load virtual files
+        files_to_analyze = []
+        if review.files_json:
+            try:
+                files_to_analyze = json.loads(review.files_json)
+            except Exception:
+                pass
+                
+        if not files_to_analyze:
+            return
+            
+        # Delete old issues and metrics for this review
+        Issue.objects.filter(review=review).delete()
+        CodeMetrics.objects.filter(review=review).delete()
+        
+        # Load enabled rules
+        rules = list(Rule.objects.all())
+        if not rules:
+            seed_default_rules()
+            rules = list(Rule.objects.all())
+            
+        analyzer = CodeAnalyzer(rules)
+        
+        total_issues_count = 0
+        cumulative_score = 0
+        file_results = []
+        
+        # Check if there is an empty repo warning
+        is_empty_repo = len(files_to_analyze) == 1 and files_to_analyze[0]['filepath'] == 'warning.txt'
+        
+        if not is_empty_repo:
+            for vf in files_to_analyze:
+                res = analyzer.analyze_file(vf['filepath'], vf['content'])
+                file_results.append(res)
+                total_issues_count += len(res['issues'])
+                cumulative_score += res['score']
+                
+                # Save CodeMetrics
+                CodeMetrics.objects.create(
+                    review=review,
+                    filepath=vf['filepath'],
+                    complexity=res['metrics']['complexity'],
+                    maintainability=res['metrics']['maintainability'],
+                    loc=res['metrics']['loc'],
+                    coverage=res['metrics']['coverage']
+                )
+                
+                # Save individual Issues
+                for issue in res['issues']:
+                    Issue.objects.create(
+                        review=review,
+                        filepath=issue['filepath'],
+                        line=issue['line'],
+                        code_snippet=issue['code_snippet'],
+                        message=issue['message'],
+                        severity=issue['severity'],
+                        category=issue['category'],
+                        suggestion=issue['suggestion'],
+                        status='open'
+                    )
+        
+        # Handle empty repo warning issue
+        if is_empty_repo:
+            Issue.objects.create(
+                review=review,
+                filepath='warning.txt',
+                line=1,
+                code_snippet='Repository is empty',
+                message='This repository is empty. No source code files matching (.js, .ts, .py, .go) were found to analyze.',
+                severity='critical',
+                category='style',
+                suggestion='Please add source code files to the repository and run the audit again.',
+                status='open'
+            )
+            total_issues_count = 0
+            cumulative_score = 100
+            
+        # Handle clean code positive issue
+        elif total_issues_count == 0:
+            first_file = files_to_analyze[0]['filepath']
+            snippet = '# Code Quality Audit Passed' if first_file.endswith('.py') else '// Code Quality Audit Passed'
+            Issue.objects.create(
+                review=review,
+                filepath=first_file,
+                line=1,
+                code_snippet=snippet,
+                message='Excellent! Code is clean. No security vulnerabilities, performance bottlenecks, or code smell issues were detected.',
+                severity='low',
+                category='style',
+                suggestion='Code is good! Maintain this standard.',
+                status='open'
+            )
+            total_issues_count = 0
+            cumulative_score = 100
+            
+        # Calculate overall score
+        avg_score = int(round(cumulative_score / len(file_results))) if file_results else 100
+        
+        # Update review
+        review.score = avg_score
+        review.save()
+        
+        # Update repository
+        repo.score = avg_score
+        repo.total_issues = total_issues_count
+        repo.save()
+        
+        # Broadcast finished/updated event
+        broadcast_ws_event({
+            'type': 'ANALYSIS_COMPLETED',
+            'repoId': repo.id,
+            'reviewId': review.id,
+            'score': avg_score,
+            'issues': total_issues_count
+        })
+        
+        logger.info(f"Successfully reanalyzed review ID: {review_id}")
+        
+    except Exception as e:
+        logger.exception(f"Error during review reanalysis: {e}")
+
+
 @shared_task(name='repositories.tasks.analyze_repository')
 def analyze_repository_task(repo_id: int, user_id: int = None):
     """

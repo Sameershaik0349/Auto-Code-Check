@@ -82,11 +82,13 @@ export const CodeReview: React.FC<CodeReviewProps> = ({ reviewId, onBack }) => {
         if (event.filepath === selectedFile) {
           setEditContent(event.content);
         }
+      } else if (event.type === 'ANALYSIS_COMPLETED' && event.reviewId === reviewId) {
+        fetchReviewDetails(reviewId);
       }
     };
     addWsListener(handleWsEvent);
     return () => removeWsListener(handleWsEvent);
-  }, [reviewId, selectedFile, addWsListener, removeWsListener, updateFileLocally]);
+  }, [reviewId, selectedFile, addWsListener, removeWsListener, updateFileLocally, fetchReviewDetails]);
 
   if (isLoading || !activeReview) {
     return (
@@ -148,13 +150,17 @@ export const CodeReview: React.FC<CodeReviewProps> = ({ reviewId, onBack }) => {
     }
   };
 
-  const acceptFixPatch = () => {
+  const acceptFixPatch = async () => {
     if (!previewFix || !activeFileObject) return;
     
     // Update local file contents in memory to reflect fixed state
     const lines = activeFileContent.split('\n');
     lines[previewFix.line - 1] = previewFix.fixed;
-    activeFileObject.content = lines.join('\n');
+    const newContent = lines.join('\n');
+    activeFileObject.content = newContent;
+    
+    // Save to backend database
+    await updateFileContent(reviewId, selectedFile, newContent);
     
     // Clear preview
     setPreviewFix(null);
@@ -297,8 +303,8 @@ export const CodeReview: React.FC<CodeReviewProps> = ({ reviewId, onBack }) => {
         <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden relative">
           {/* File metrics header banner */}
           <div className="px-6 py-2.5 bg-slate-900/80 border-b border-slate-800 flex items-center justify-between text-xs text-slate-400 font-mono print:hidden">
-            <div className="flex items-center gap-3">
-              <span className="truncate max-w-[200px] sm:max-w-xs md:max-w-md">Path: {selectedFile}</span>
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="truncate max-w-[120px] sm:max-w-xs md:max-w-md font-mono shrink">Path: {selectedFile}</span>
               <button
                 onClick={() => {
                   if (isEditing) {
@@ -308,13 +314,13 @@ export const CodeReview: React.FC<CodeReviewProps> = ({ reviewId, onBack }) => {
                     setEditContent(activeFileContent);
                   }
                 }}
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded transition-colors ${
+                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[10px] font-semibold whitespace-nowrap shrink-0 transition-all border ${
                   isEditing 
-                    ? 'bg-amber-600 text-white hover:bg-amber-700' 
-                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'
+                    ? 'bg-amber-600/20 text-amber-400 border-amber-500/20 hover:bg-amber-600/30' 
+                    : 'bg-slate-800/80 text-slate-300 border-slate-700/50 hover:bg-slate-800 hover:text-white'
                 }`}
               >
-                <Edit3 className="h-3 w-3" />
+                <Edit3 className="h-3.5 w-3.5" />
                 <span>{isEditing ? 'Cancel Edit' : 'Edit File'}</span>
               </button>
             </div>

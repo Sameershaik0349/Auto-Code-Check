@@ -111,6 +111,14 @@ class ReviewViewSet(viewsets.ReadOnlyModelViewSet):
         except Exception:
             pass
             
+        # Re-run static analysis on updated files
+        try:
+            from .tasks import reanalyze_review_files
+            reanalyze_review_files(instance.id)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to reanalyze review: {e}")
+            
         return Response({'success': True, 'message': 'File content updated successfully.'})
 
 
@@ -128,6 +136,65 @@ class IssueViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         issue = serializer.save()
+        
+        # Auto-apply resolution if status is set to resolved
+        if issue.status == 'resolved':
+            review = issue.review
+            filepath = issue.filepath
+            line_number = issue.line
+            
+            # Load files_json
+            import json
+            files = []
+            if review.files_json:
+                try:
+                    files = json.loads(review.files_json)
+                except Exception:
+                    pass
+                    
+            file_found = False
+            for f in files:
+                if f['filepath'] == filepath:
+                    lines = f['content'].splitlines()
+                    if 1 <= line_number <= len(lines):
+                        orig_line = lines[line_number - 1]
+                        
+                        # Apply fix for Python syntax colon error or direct suggestion
+                        if 'expected \':\'' in issue.message.lower() or 'colon' in issue.message.lower():
+                            stripped = orig_line.rstrip()
+                            if not stripped.endswith(':'):
+                                lines[line_number - 1] = orig_line.rstrip('\r\n') + ':'
+                                file_found = True
+                        elif issue.suggestion and not any(kw in issue.suggestion.lower() for kw in ['fix the', 'ensure', 'recommended', 'refactor', 'replace']):
+                            # Simple single-line replacement
+                            lines[line_number - 1] = issue.suggestion
+                            file_found = True
+                            
+                    if file_found:
+                        f['content'] = '\n'.join(lines)
+                        review.files_json = json.dumps(files)
+                        review.save()
+                        
+                        # Broadcast file update to clients
+                        try:
+                            from .tasks import broadcast_ws_event
+                            broadcast_ws_event({
+                                'type': 'FILE_UPDATED',
+                                'reviewId': review.id,
+                                'filepath': filepath,
+                                'content': f['content']
+                            })
+                        except Exception:
+                            pass
+                        
+                        # Re-run static analysis on updated files
+                        try:
+                            from .tasks import reanalyze_review_files
+                            reanalyze_review_files(review.id)
+                        except Exception as e:
+                            import logging
+                            logging.getLogger(__name__).warning(f"Failed to reanalyze review: {e}")
+                            
         try:
             from .tasks import broadcast_ws_event
             broadcast_ws_event({
